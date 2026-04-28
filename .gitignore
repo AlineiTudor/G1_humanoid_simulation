@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug/experiment logs
+logs/
+
+# Data output (generated at runtime)
+grasp_data/
+output/
+*.hdf5
+
+# Isaac Sim/Lab runtime artifacts
+*.usd.tmp
+.thumbs/
+
+# USD/binary assets (large files  keep in separate storage)
+# resources/
+# *.usd
+
+# OS
+.DS_Store
+Thumbs.db
