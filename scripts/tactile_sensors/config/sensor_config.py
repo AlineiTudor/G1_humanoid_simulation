@@ -25,8 +25,10 @@ class SensorConfig:
     # ========================================================================
     # Sensor Naming
     # ========================================================================
-    # Prim name appended to elastomer links (e.g., "right_palm_force_sensor/tactile_sensor")
-    sensor_prim_name: str = "tactile_sensor"
+    # Prim name appended to force sensor links (e.g., "right_palm_force_sensor/tactile_sensor").
+    # Set to "" if the hand USD has no dedicated sensor sub-prim  the force
+    # sensor link itself (which has RigidBodyAPI) will be used as the sensor body.
+    sensor_prim_name: str = ""
 
     # ========================================================================
     # Sensor Enable/Disable Flags
@@ -96,7 +98,7 @@ class SensorConfig:
     enable_force_field: bool = True
 
     # Force field physics parameters
-    normal_contact_stiffness: float = 2.0
+    normal_contact_stiffness: float = 20.0
     friction_coefficient: float = 2.0
     tangential_stiffness: float = 0.2
 
@@ -106,10 +108,19 @@ class SensorConfig:
     # History length (0 = no history, just current frame)
     history_length: int = 0
 
+    # Tactile normal offset (meters). Pushes tactile sensing points outward
+    # along the surface normal so they extend past parent link collision
+    # geometry. Needed for multi-body hands (RH56E2) where force sensor
+    # meshes are recessed behind parent collision surfaces. Set to 0.0
+    # to disable. Typical values: 0.005-0.02 for small objects, more for
+    # larger scaled objects.
+    tactile_normal_offset: float = 0.005
+
     # Contact object path pattern (use ENV_REGEX_NS for multi-env)
-    # Example: "{ENV_REGEX_NS}/contact_object" to detect contact with an object
-    # Set to None to detect contact with ALL objects in scene
-    contact_object_prim_path_expr: Optional[str] = None
+    # MUST point to the contact object's prim path for force field to work.
+    # The object must have an SDF collision mesh (USD mesh, not procedural).
+    # Set to None only when no contact object exists (disables force field).
+    contact_object_prim_path_expr: Optional[str] = "{ENV_REGEX_NS}/grasp_object"
 
     # ========================================================================
     # Per-Location Parameter Overrides (Optional)

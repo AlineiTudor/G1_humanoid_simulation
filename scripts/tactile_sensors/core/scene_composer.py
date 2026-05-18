@@ -2,8 +2,9 @@
 Scene Composer for Multi-Hand Tactile Scenes
 """
 
+import math
 import isaaclab.sim as sim_utils
-from isaaclab.assets import AssetBaseCfg
+from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from typing import List, Tuple
@@ -16,6 +17,7 @@ from .hand_builder import HandBuilder
 # Module-level storage for configs during scene construction
 # This is a workaround for @configclass not allowing non-field attributes
 _SCENE_BUILD_CONFIGS = {}
+_GRASP_BUILD_CONFIGS = {}
 
 
 
@@ -182,3 +184,172 @@ def create_tactile_scene(
 
     return scene_cfg
 
+
+# ======================================================================
+# Grasp Scene  extends TactileHandSceneCfg with table + object + camera
+# ======================================================================
+
+def _look_at_quat(eye, target):
+    """Compute quaternion (w,x,y,z) for camera looking from eye toward target."""
+    forward = [target[i] - eye[i] for i in range(3)]
+    norm = math.sqrt(sum(f * f for f in forward))
+    forward = [f / norm for f in forward]
+
+    # Camera convention: -Z is forward, Y is up
+    # Compute rotation from -Z axis to forward direction
+    world_up = [0.0, 0.0, 1.0]
+
+    # Right = forward x up
+    right = [
+        forward[1] * world_up[2] - forward[2] * world_up[1],
+        forward[2] * world_up[0] - forward[0] * world_up[2],
+        forward[0] * world_up[1] - forward[1] * world_up[0],
+    ]
+    r_norm = math.sqrt(sum(r * r for r in right))
+    if r_norm < 1e-6:
+        right = [1.0, 0.0, 0.0]
+    else:
+        right = [r / r_norm for r in right]
+
+    # Recompute up = right x forward
+    up = [
+        right[1] * forward[2] - right[2] * forward[1],
+        right[2] * forward[0] - right[0] * forward[2],
+        right[0] * forward[1] - right[1] * forward[0],
+    ]
+
+    # Build rotation matrix (row-major) and convert to quaternion
+    # For ROS convention camera: X=right, Y=down, Z=forward
+    m00, m01, m02 = right[0], -up[0], forward[0]
+    m10, m11, m12 = right[1], -up[1], forward[1]
+    m20, m21, m22 = right[2], -up[2], forward[2]
+
+    tr = m00 + m11 + m22
+    if tr > 0:
+        s = 0.5 / math.sqrt(tr + 1.0)
+        w = 0.25 / s
+        x = (m21 - m12) * s
+        y = (m02 - m20) * s
+        z = (m10 - m01) * s
+    elif m00 > m11 and m00 > m22:
+        s = 2.0 * math.sqrt(1.0 + m00 - m11 - m22)
+        w = (m21 - m12) / s
+        x = 0.25 * s
+        y = (m01 + m10) / s
+        z = (m02 + m20) / s
+    elif m11 > m22:
+        s = 2.0 * math.sqrt(1.0 + m11 - m00 - m22)
+        w = (m02 - m20) / s
+        x = (m01 + m10) / s
+        y = 0.25 * s
+        z = (m12 + m21) / s
+    else:
+        s = 2.0 * math.sqrt(1.0 + m22 - m00 - m11)
+        w = (m10 - m01) / s
+        x = (m02 + m20) / s
+        y = (m12 + m21) / s
+        z = 0.25 * s
+
+    return (w, x, y, z)
+
+
+@configclass
+class GraspSceneCfg(TactileHandSceneCfg):
+    """Scene with robot, tactile sensors, table, graspable object, and camera."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        grasp_cfg = _GRASP_BUILD_CONFIGS.pop(id(self), None)
+        if grasp_cfg is not None:
+            self._build_grasp_scene(grasp_cfg)
+
+    def _build_grasp_scene(self, grasp_cfg):
+        """Add table, object, and camera to the scene."""
+        from isaaclab.sensors import CameraCfg
+
+        # --- Table (static kinematic body) ---
+        table = AssetBaseCfg(
+            prim_path="{ENV_REGEX_NS}/Table",
+            spawn=sim_utils.CuboidCfg(
+                size=grasp_cfg.table_size,
+                visual_material=sim_utils.PreviewSurfaceCfg(
+                    diffuse_color=(0.6, 0.4, 0.2),
+                ),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    kinematic_enabled=True,
+                ),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(
+                pos=grasp_cfg.table_pos,
+            ),
+        )
+        setattr(self, "table", table)
+
+        # --- Graspable object ---
+        from ..assets.contact_objects import CUBE_CFG, NUT_CFG
+
+        if grasp_cfg.object_type == "cube":
+            obj_cfg = CUBE_CFG.copy()
+        else:
+            obj_cfg = NUT_CFG.copy()
+
+        obj_cfg.prim_path = "{ENV_REGEX_NS}/grasp_object"
+        obj_cfg.init_state = RigidObjectCfg.InitialStateCfg(
+            pos=grasp_cfg.object_pos,
+            rot=(1.0, 0.0, 0.0, 0.0),
+        )
+        setattr(self, "grasp_object", obj_cfg)
+
+        # --- Camera ---
+        if grasp_cfg.camera_enabled:
+            cam_rot = _look_at_quat(grasp_cfg.camera_pos, grasp_cfg.camera_target)
+            camera = CameraCfg(
+                prim_path="{ENV_REGEX_NS}/scene_camera",
+                update_period=0.0,
+                height=grasp_cfg.camera_height,
+                width=grasp_cfg.camera_width,
+                data_types=["rgb"],
+                spawn=sim_utils.PinholeCameraCfg(
+                    focal_length=12.0,
+                    focus_distance=400.0,
+                    horizontal_aperture=20.0,
+                    clipping_range=(0.1, 100.0),
+                ),
+                offset=CameraCfg.OffsetCfg(
+                    pos=grasp_cfg.camera_pos,
+                    rot=cam_rot,
+                    convention="world",
+                ),
+            )
+            setattr(self, "scene_camera", camera)
+
+
+def create_grasp_scene(
+    sim_cfg: SimulationConfig,
+    sensor_cfg: SensorConfig,
+    grasp_cfg,
+) -> GraspSceneCfg:
+    """Creates a GraspSceneCfg with table, object, camera, robot, and sensors.
+
+    Args:
+        sim_cfg: Simulation configuration.
+        sensor_cfg: Sensor configuration.
+        grasp_cfg: GraspDataCollectionConfig with table/object/camera settings.
+
+    Returns:
+        GraspSceneCfg ready to pass to InteractiveScene.
+    """
+    scene_cfg = GraspSceneCfg.__new__(GraspSceneCfg)
+
+    _SCENE_BUILD_CONFIGS[id(scene_cfg)] = (sim_cfg, sensor_cfg)
+    _GRASP_BUILD_CONFIGS[id(scene_cfg)] = grasp_cfg
+
+    GraspSceneCfg.__init__(
+        scene_cfg,
+        num_envs=sim_cfg.num_envs,
+        env_spacing=sim_cfg.env_spacing,
+    )
+
+    return scene_cfg

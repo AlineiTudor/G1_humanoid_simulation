@@ -64,8 +64,8 @@ class HandConfig:
     disable_gravity: bool = True
 
     # Solver iterations
-    solver_position_iteration_count: int = 128
-    solver_velocity_iteration_count: int = 16
+    solver_position_iteration_count: int = 12
+    solver_velocity_iteration_count: int = 1
 
     # ========================================================================
     # Camera Configuration

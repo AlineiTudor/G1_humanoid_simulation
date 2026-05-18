@@ -27,7 +27,11 @@ def _fix_usd_before_load(
             robot root. Used to identify hand sub-trees whose
             ArticulationRootAPI should be removed.
     """
-    from pxr import Sdf, Usd, UsdPhysics
+    from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
+    try:
+        from pxr import PhysxSchema
+    except ImportError:
+        PhysxSchema = None
 
     if hand_mount_paths is None:
         hand_mount_paths = {
@@ -75,32 +79,189 @@ def _fix_usd_before_load(
                 prim.RemoveAPI(UsdPhysics.ArticulationRootAPI)
                 modified = True
 
-            # Fix 2b: Set collision prims to convexHull approximation.
-            # Only fix prims that ALREADY have CollisionAPI  never apply
-            # CollisionAPI to new prims (force sensor "collisions" scopes
-            # are not meant to be collision objects).
             prim_name = prim.GetName()
-            parent = prim.GetParent()
-            parent_name = parent.GetName() if parent else ""
+            prim_path_str = str(prim.GetPath())
 
-            # Fix 2b: Remove CollisionAPI from force sensor prims
-            # (not meant to be collision objects).
-            if "force_sensor" in parent_name and prim.HasAPI(UsdPhysics.CollisionAPI):
-                prim.RemoveAPI(UsdPhysics.CollisionAPI)
-                print(f"  [g1_robot] Removed CollisionAPI from: {prim.GetPath()}")
-                modified = True
-            # Fix 2c: Set convexHull on collision prims that already
-            # have CollisionAPI. PhysX requires convexHull for dynamic
-            # rigid body collisions.
-            elif prim_name == "collisions" and prim.HasAPI(UsdPhysics.CollisionAPI):
-                approx_attr = prim.GetAttribute("physics:approximation")
-                current = approx_attr.Get() if approx_attr and approx_attr.HasValue() else None
+            # Fix 2b: Ensure force sensor collision prims have CollisionAPI
+            # with convexHull approximation. The sensor finds visual meshes
+            # from the elastomer sub-prim, not /collisions, so collision
+            # must stay on /collisions for physical contact to work.
+            # Fix 3 (below) sets tight contact_offset/rest_offset so the
+            # nut can get close enough for SDF overlap despite collision.
+            if ("force_sensor" in prim_path_str
+                    and "/collisions" in prim_path_str
+                    and prim.IsA(UsdGeom.Mesh)):
+                if not prim.HasAPI(UsdPhysics.CollisionAPI):
+                    UsdPhysics.CollisionAPI.Apply(prim)
+                    print(f"  [g1_robot] Restored CollisionAPI on force sensor: {prim.GetPath()}")
+                    modified = True
+                if not prim.HasAPI(UsdPhysics.MeshCollisionAPI):
+                    UsdPhysics.MeshCollisionAPI.Apply(prim)
+                    print(f"  [g1_robot] Applied MeshCollisionAPI on: {prim.GetPath()}")
+                    modified = True
+                mesh_col_api = UsdPhysics.MeshCollisionAPI(prim)
+                current = mesh_col_api.GetApproximationAttr().Get()
                 if current != "convexHull":
-                    prim.CreateAttribute(
-                        "physics:approximation", Sdf.ValueTypeNames.Token
-                    ).Set("convexHull")
+                    mesh_col_api.GetApproximationAttr().Set("convexHull")
+                    print(f"  [g1_robot] Set convexHull on force sensor: {prim.GetPath()}")
+                    modified = True
+
+            # Fix 2c: Set convexHull on non-force-sensor collision prims
+            # that already have CollisionAPI (body links, etc).
+            if (prim_name == "collisions"
+                    and "force_sensor" not in prim_path_str
+                    and prim.HasAPI(UsdPhysics.CollisionAPI)):
+                if not prim.HasAPI(UsdPhysics.MeshCollisionAPI):
+                    UsdPhysics.MeshCollisionAPI.Apply(prim)
+                mesh_col_api = UsdPhysics.MeshCollisionAPI(prim)
+                current = mesh_col_api.GetApproximationAttr().Get()
+                if current != "convexHull":
+                    mesh_col_api.GetApproximationAttr().Set("convexHull")
                     print(f"  [g1_robot] Set convexHull on: {prim.GetPath()}")
                     modified = True
+
+            # Fix 2d: Increase mimic joint damping ratio.
+            # USD default is 0.005 (very underdamped ? wobble).
+            # Set to 1.0 (critically damped) for rigid gear-like behavior.
+            # Per Isaac Sim docs: mimic joints should NOT have their own
+            # drive  PhysX copies the drive from the reference joint.
+            # Also remove any joint drive on mimic joints so PhysX
+            # MimicJointAPI handles them natively.
+            damping_attr = prim.GetAttribute("physxMimicJoint:rotX:dampingRatio")
+            if damping_attr and damping_attr.IsValid():
+                current_damping = damping_attr.Get()
+                if current_damping is not None and current_damping < 0.5:
+                    damping_attr.Set(1.0)
+                    print(f"  [g1_robot] Set mimic dampingRatio=1.0 on: {prim.GetPath()}")
+                    modified = True
+                # Remove any joint drive on this mimic joint (per Isaac Sim docs:
+                # "Remove or set all values to zero in the joint drive")
+                if prim.HasAPI(UsdPhysics.DriveAPI):
+                    prim.RemoveAPI(UsdPhysics.DriveAPI)
+                    print(f"  [g1_robot] Removed DriveAPI from mimic: {prim.GetPath()}")
+                    modified = True
+
+    # --- Fix 3: Set contact_offset / rest_offset on ALL collision prims ---
+    # Isaac Lab's collision_props uses @apply_nested at runtime, but it
+    # FAILS because collision sub-prims are instanced (URDF-to-USD creates
+    # instanceable visual/collision sub-prims). Setting these in the source
+    # USD before load bypasses the instancing problem  the authored values
+    # are part of the prototype and inherited by all instances.
+    robot_prim = stage.GetPrimAtPath(f"/{robot_root}")
+    if robot_prim.IsValid():
+        contact_offset = 0.001
+        rest_offset = -0.0005
+        fix3_count = 0
+        for prim in Usd.PrimRange(robot_prim):
+            if not prim.HasAPI(UsdPhysics.CollisionAPI):
+                continue
+            # Apply PhysxCollisionAPI schema so PhysX recognises the attrs
+            if PhysxSchema is not None:
+                if not prim.HasAPI(PhysxSchema.PhysxCollisionAPI):
+                    PhysxSchema.PhysxCollisionAPI.Apply(prim)
+            # Set contact offset
+            co_attr = prim.GetAttribute("physxCollision:contactOffset")
+            if not co_attr or not co_attr.IsValid():
+                co_attr = prim.CreateAttribute(
+                    "physxCollision:contactOffset",
+                    Sdf.ValueTypeNames.Float
+                )
+            if co_attr.Get() != contact_offset:
+                co_attr.Set(contact_offset)
+                fix3_count += 1
+            # Set rest offset
+            ro_attr = prim.GetAttribute("physxCollision:restOffset")
+            if not ro_attr or not ro_attr.IsValid():
+                ro_attr = prim.CreateAttribute(
+                    "physxCollision:restOffset",
+                    Sdf.ValueTypeNames.Float
+                )
+            if ro_attr.Get() != rest_offset:
+                ro_attr.Set(rest_offset)
+                fix3_count += 1
+        if fix3_count > 0:
+            print(f"  [g1_robot] Set contact_offset={contact_offset}, "
+                  f"rest_offset={rest_offset} on collision prims "
+                  f"({fix3_count} attrs updated)")
+            modified = True
+
+    # --- Fix 4: Create & bind compliant contact material on force sensor prims ---
+    #
+    # WHY THIS IS NEEDED:
+    # The TacSL force field pipeline requires tactile points to OVERLAP with the
+    # contact object mesh (SDF < 0) to produce forces. PhysX collision normally
+    # prevents any overlap. Compliant contact material changes PhysX behavior:
+    # instead of hard rigid collision, it uses implicit springs (stiffness + damping)
+    # that allow controlled penetration through the collision surface. This small
+    # penetration (~1mm) is enough for tactile points to enter the contact object's
+    # SDF field and register forces.
+    #
+    # WHY IT MUST BE DONE HERE (in the source USD):
+    # Isaac Lab's runtime bind_physics_material() uses @apply_nested, which SKIPS
+    # instanced prims. The G1 robot's URDF-to-USD conversion creates instanceable
+    # collision sub-prims, so the runtime binding silently fails. The compliant
+    # material IS created (verified in diagnostic logs), but never BOUND to the
+    # collision geometry  PhysX ignores it.
+    #
+    # By creating and binding the material here in the source USD (before Isaac Lab
+    # instances it), the binding becomes part of the prototype and applies to all
+    # instances automatically.
+    #
+    # REFERENCE: This replicates what spawn_rigid_body_material() + bind_physics_material()
+    # do in the GelSight finger example (where it works because the USD is not instanced).
+    # See: isaaclab/sim/spawners/materials/physics_materials.py (material creation)
+    #      isaaclab/sim/utils/prims.py (material binding)
+    if robot_prim.IsValid() and PhysxSchema is not None:
+        # Step 1: Create a single shared compliant contact material prim.
+        # One material for all force sensors  they share the same stiffness/damping.
+        mat_path = f"/{robot_root}/force_sensor_compliant_material"
+        mat_prim = stage.GetPrimAtPath(mat_path)
+        if not mat_prim.IsValid():
+            mat_prim = UsdShade.Material.Define(stage, mat_path).GetPrim()
+
+        # Step 2: Apply physics material APIs and set compliant contact properties.
+        # UsdPhysics.MaterialAPI: standard rigid body material (friction, restitution).
+        # PhysxSchema.PhysxMaterialAPI: PhysX-specific extensions including compliant
+        # contact springs. Both are needed  PhysX reads from PhysxMaterialAPI.
+        if not mat_prim.HasAPI(UsdPhysics.MaterialAPI):
+            UsdPhysics.MaterialAPI.Apply(mat_prim)
+        if not mat_prim.HasAPI(PhysxSchema.PhysxMaterialAPI):
+            PhysxSchema.PhysxMaterialAPI.Apply(mat_prim)
+
+        physx_mat = PhysxSchema.PhysxMaterialAPI(mat_prim)
+        # compliantContactStiffness: spring constant for the implicit contact springs.
+        # Higher = stiffer (closer to rigid). Must be > 0 to enable compliant mode.
+        # 100.0 matches the GelSight example that produces forces successfully.
+        physx_mat.GetCompliantContactStiffnessAttr().Set(100.0)
+        # compliantContactDamping: viscous damping for the contact springs.
+        # Prevents oscillation. 10.0 matches the GelSight example.
+        physx_mat.GetCompliantContactDampingAttr().Set(10.0)
+
+        # Step 3: Bind the material to every force sensor collision mesh.
+        # Detection pattern matches Fix 2b: prims whose path contains "force_sensor"
+        # AND "/collisions" AND that are Mesh prims (the actual collision geometry).
+        # The binding uses materialPurpose="physics" so it only affects PhysX collision
+        # behavior, not visual rendering.
+        material = UsdShade.Material(mat_prim)
+        fix4_count = 0
+        for prim in Usd.PrimRange(robot_prim):
+            prim_path_str = str(prim.GetPath())
+            if ("force_sensor" in prim_path_str
+                    and "/collisions" in prim_path_str
+                    and prim.IsA(UsdGeom.Mesh)):
+                binding_api = UsdShade.MaterialBindingAPI.Apply(prim)
+                binding_api.Bind(
+                    material,
+                    bindingStrength=UsdShade.Tokens.strongerThanDescendants,
+                    materialPurpose="physics",
+                )
+                fix4_count += 1
+
+        if fix4_count > 0:
+            print(f"  [g1_robot] Bound compliant contact material "
+                  f"(stiffness=100, damping=10) to {fix4_count} force sensor "
+                  f"collision prims")
+            modified = True
 
     if modified:
         stage.GetRootLayer().Save()
@@ -215,10 +376,29 @@ def create_robot_articulation_cfg(
     # Fix USD issues (defaultPrim + hand ArticulationRootAPI) before Isaac Lab loads it
     _fix_usd_before_load(robot_usd_path, source_prim_path)
 
+    # Build list of force sensor link paths for compliant contact.
+    # Paths must be RELATIVE to the articulation root (Robot/).
+    # Bind the material to the force sensor link PARENTS  the compliant
+    # contact material propagates from parent to child collision prims.
+    # (Cannot bind to collision meshes directly because they are instanced.)
+    force_sensor_links = []
+    for side in ("left", "right"):
+        hand_mount = f"{side}_hand"
+        # Palm force sensor link
+        force_sensor_links.append(f"{hand_mount}/{side}_palm_force_sensor")
+        # Fingers: index, middle, little have 3 regions; thumb has 4
+        for finger, n_regions in [("index", 3), ("middle", 3), ("little", 3), ("thumb", 4)]:
+            for region in range(1, n_regions + 1):
+                force_sensor_links.append(f"{hand_mount}/{side}_{finger}_force_sensor_{region}")
+
     return ArticulationCfg(
         prim_path = prim_path,
-        spawn = sim_utils.UsdFileCfg(
+        spawn = sim_utils.UsdFileWithCompliantContactCfg(
             usd_path = robot_usd_path,
+            # Compliant contact for tactile sensor elastomer links
+            compliant_contact_stiffness = 100.0,
+            compliant_contact_damping = 10.0,
+            physics_material_prim_path = force_sensor_links,
             rigid_props = sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity = False,
                 max_depenetration_velocity = 1.0,
@@ -228,6 +408,11 @@ def create_robot_articulation_cfg(
                 linear_damping = 1.0,         # drag on linear motion
                 angular_damping = 1.0,        # drag on rotation
             ),
+            # NOTE: collision_props is NOT set here because it fails at
+            # runtime  all collision sub-prims are instanced, so Isaac
+            # Lab's modify_collision_properties cannot reach them. Instead,
+            # Fix 3 in _fix_usd_before_load() sets contact_offset and
+            # rest_offset directly in the source USD before instancing.
             articulation_props = sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions = True,
                 solver_position_iteration_count = 12,
@@ -251,11 +436,21 @@ def create_robot_articulation_cfg(
                 stiffness = 200.0,
                 damping = 20.0,
             ),
+            # All hand joints (master + mimic) in one group.
+            # Matching the reference unitree_sim_isaaclab pattern:
+            # PhysX MimicJointAPI overrides position targets for mimic
+            # joints during the physics step. The drive (stiffness/damping)
+            # then enforces the mimic-computed target. effort_limit must
+            # be > 0 (USD has 0.0 for mimic joints from URDF convention).
             "hand_joints": ImplicitActuatorCfg(
-                joint_names_expr = [".*_index_.*", ".*_middle_.*", ".*_ring_.*",
-                                    ".*_little_.*", ".*_thumb_.*"],
-                stiffness = 50.0,
-                damping = 20.0,
+                joint_names_expr = [".*_index_.*_joint", ".*_middle_.*_joint",
+                                    ".*_ring_.*_joint", ".*_little_.*_joint",
+                                    ".*_thumb_.*_joint"],
+                effort_limit = 300.0,
+                velocity_limit = 100.0,
+                stiffness = 100.0,
+                damping = 10.0,
+                armature = 0.1,
             ),
         },
     )
