@@ -10,8 +10,7 @@ The project enables:
 - Scripted grasp trajectory recording with automatic HDF5 data saving
 - Contact object interaction with SDF-based force computation
 
-<!-- TODO: Add a hero image or GIF of the simulation running -->
-![Simulation Overview](docs/assets/hero.gif)
+![Simulation Overview](docs/images/G1_sim_overview.gif)
 
 ---
 
@@ -41,7 +40,7 @@ This project runs inside a Docker container on a remote PC with an **NVIDIA GPU*
 | OS | Linux (tested on Ubuntu) |
 | Other | `git`, `python3` |
 
-### Step 1  Build the Docker Image
+### Step 1 - Build the Docker Image
 
 Run the setup script to clone Isaac Lab and build the Docker image:
 
@@ -52,11 +51,11 @@ cd docker/
 
 This script will:
 
-1. **Check prerequisites**  verifies NVIDIA driver version (525+), Docker, NVIDIA Container Toolkit, available disk space (50 GB+), git, and Python3
-2. **Create workspace**  sets up `$HOME/isaaclab_docker_workspace`
-3. **Clone Isaac Lab**  pulls the official repository
-4. **Build the Docker image**  runs `./docker/container.py build` (~2045 min, ~10 GB download)
-5. **Verify**  confirms the image was created
+1. **Check prerequisites** - verifies NVIDIA driver version (525+), Docker, NVIDIA Container Toolkit, available disk space (50 GB+), git, and Python3
+2. **Create workspace** - sets up `$HOME/isaaclab_docker_workspace`
+3. **Clone Isaac Lab** - pulls the official repository
+4. **Build the Docker image** - runs `./docker/container.py build` (~2045 min, ~10 GB download)
+5. **Verify** - confirms the image was created
 
 #### Variables to configure (before running)
 
@@ -71,7 +70,7 @@ This script will:
 The output image will be named: `isaac-lab-{DOCKER_PROFILE}-{IMAGE_SUFFIX}:latest`
 (e.g., `isaac-lab-ros2-tactile:latest`).
 
-### Step 2  Clone Unitree Assets
+### Step 2 - Clone Unitree Assets
 
 Before the first container launch, clone the Unitree simulation assets:
 
@@ -79,7 +78,7 @@ Before the first container launch, clone the Unitree simulation assets:
 git clone https://github.com/unitreerobotics/unitree_sim_isaaclab.git ~/tudor_unitree_isaaclab/unitree_sim_isaaclab
 ```
 
-### Step 3  Launch the Container
+### Step 3 - Launch the Container
 
 ```bash
 cd docker/
@@ -110,7 +109,7 @@ These host directories are mounted into the container at:
 
 The script also mounts X11, Vulkan, and GLVND directories for GPU rendering, sets up `DISPLAY` forwarding, and auto-sources ROS2 Humble inside the container.
 
-> **Note:** If `PROJECT_DIR_1` or `PROJECT_DIR_2` don't exist, the script warns but continues. `UNITREE_REPO_DIR` is required  the script will exit if it's missing.
+> **Note:** If `PROJECT_DIR_1` or `PROJECT_DIR_2` don't exist, the script warns but continues. `UNITREE_REPO_DIR` is required (the script will exit if it's missing).
 
 ---
 
@@ -175,16 +174,16 @@ tactile_sensors/
 +-- logs/                                # Development logs (diagnostic outputs)
 ```
 
-**Key directories for users:**
+**User related directories:**
 
-- **`scripts/`**  all scripts launched directly by the user
-- **`config/`**  all tunable parameters (physics, sensors, grasp collection)
+- **`scripts/`** - all scripts launched directly by the user
+- **`config/`** - all tunable parameters (physics, sensors, grasp collection)
 
-**Key directories for developers:**
+**Developer related directories**
 
-- **`assets/`**  how robots/sensors/objects are spawned in Isaac Lab
-- **`core/`**  how scenes are composed from assets
-- **`control/`**  motion controllers (IK, waypoints)
+- **`assets/`** - how robots/sensors/objects are spawned in Isaac Lab
+- **`core/`** - how scenes are composed from assets
+- **`control/`** - motion controllers (IK, waypoints)
 
 ---
 
@@ -196,19 +195,17 @@ All scripts live in `scripts/` and are the primary user entry points. Each scrip
 
 **6-DOF Cartesian IK teleoperation** with grasp control and data recording. Move the arm end-effector in Cartesian space using keyboard controls, close/open fingers, and record episodes to HDF5.
 
-<!-- TODO: Add GIF showing IK teleop in action -->
-![IK Teleop Demo](docs/assets/ik_teleop.gif)
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
 | `--output_dir` | str | from config | Output directory for HDF5 episode files |
 | `--object_type` | str | `nut` | Object to grasp: `nut` (SDF mesh, supports force field) or `cube` |
-| `--no_camera` | flag |  | Disable scene camera recording |
-| `--save_tactile_rgb` | flag |  | Save tactile RGB images (large files) |
+| `--no_camera` | flag | - | Disable scene camera recording |
+| `--save_tactile_rgb` | flag | - | Save tactile RGB images (large files) |
 | `--pos_step` | float | `0.005` | Position increment per keypress (meters) |
 | `--rot_step` | float | `0.02` | Orientation increment per keypress (radians) |
 | `--damping` | float | `0.05` | DLS damping factor (lambda) for IK solver |
-| `--enable_cameras` | flag |  | Isaac Lab flag to enable camera rendering |
+| `--enable_cameras` | flag | - | Isaac Lab flag to enable camera rendering |
 
 **Keyboard controls:**
 
@@ -244,8 +241,8 @@ All scripts live in `scripts/` and are the primary user entry points. Each scrip
 |---|---|---|---|
 | `--output_dir` | str | from config | Output directory for HDF5 episode files |
 | `--object_type` | str | `nut` | Object to grasp: `nut` or `cube` |
-| `--no_camera` | flag |  | Disable scene camera |
-| `--save_tactile_rgb` | flag |  | Save tactile RGB images |
+| `--no_camera` | flag | - | Disable scene camera |
+| `--save_tactile_rgb` | flag | - | Save tactile RGB images |
 | `--step_size` | float | `0.02` | Initial position increment per keypress (radians) |
 
 **Keyboard controls:**
@@ -272,8 +269,8 @@ All scripts live in `scripts/` and are the primary user entry points. Each scrip
 | `--num_episodes` | int | `5` | Number of grasp episodes to record |
 | `--output_dir` | str | from config | Output directory for HDF5 episode files |
 | `--object_type` | str | `nut` | Object to grasp: `nut` or `cube` |
-| `--no_camera` | flag |  | Disable camera recording |
-| `--save_tactile_rgb` | flag |  | Save tactile RGB images |
+| `--no_camera` | flag | - | Disable camera recording |
+| `--save_tactile_rgb` | flag | - | Save tactile RGB images |
 
 This script is useful for **batch data collection** without manual intervention.
 
@@ -305,9 +302,9 @@ No custom arguments beyond Isaac Lab's standard `AppLauncher` flags.
 
 ## Configuration Parameters
 
-Configuration is defined via Python dataclasses in `config/`. Users typically don't need to modify these files directly  the scripts instantiate configs with sensible defaults, and key parameters are exposed as CLI arguments. However, for advanced use or custom scripts, these are the main knobs.
+Configuration is defined via Python dataclasses in `config/`. Users typically don't need to modify these files directly (the scripts instantiate configs with sensible defaults), and key parameters are exposed as CLI arguments. However, for advanced use or custom scripts, these are the main knobs.
 
-### `config/simulation_config.py`  SimulationConfig
+### `config/simulation_config.py` - SimulationConfig
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -319,7 +316,7 @@ Configuration is defined via Python dataclasses in `config/`. Users typically do
 | `fix_root_link` | `True` | Pin robot pelvis in place (for tabletop manipulation) |
 | `device` | `"cuda:0"` | Simulation device |
 
-### `config/sensor_config.py`  SensorConfig
+### `config/sensor_config.py` - SensorConfig
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -337,7 +334,7 @@ Configuration is defined via Python dataclasses in `config/`. Users typically do
 - Index proximal: (10, 8), middle: (12, 8), distal: (3, 3)
 - Similar for other fingers
 
-### `config/grasp_config.py`  GraspDataCollectionConfig
+### `config/grasp_config.py` - GraspDataCollectionConfig
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -351,7 +348,7 @@ Configuration is defined via Python dataclasses in `config/`. Users typically do
 | `randomize_object_pos` | `False` | Add noise to object position per episode |
 | `camera_enabled` | `True` | Enable scene camera |
 
-### `config/hand_config.py`  HandConfig
+### `config/hand_config.py` - HandConfig
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -448,7 +445,7 @@ Each layer depends only on the layers above it. This makes it straightforward to
 
 1. **Copy an existing script** as a template (e.g., `collect_grasp_data_ik_teleop.py`)
 
-2. **Follow the Isaac Lab import pattern**  all Isaac Lab and `tactile_sensors` imports must happen AFTER `AppLauncher`:
+2. **Follow the Isaac Lab import pattern** - all Isaac Lab and `tactile_sensors` imports must happen AFTER `AppLauncher`:
 
 ```python
 from isaaclab.app import AppLauncher
@@ -531,11 +528,11 @@ while simulation_app.is_running():
 The project provides the building blocks for reinforcement learning with tactile feedback:
 
 **Observation space components available:**
-- `robot.data.joint_pos`  joint positions (num_envs, num_joints)
-- `robot.data.joint_vel`  joint velocities
-- `sensor.data.tactile_normal_force`  per-taxel normal force
-- `sensor.data.penetration_depth`  per-taxel penetration
-- `obj.data.root_pos_w`, `obj.data.root_quat_w`  object pose
+- `robot.data.joint_pos` - joint positions (num_envs, num_joints)
+- `robot.data.joint_vel` - joint velocities
+- `sensor.data.tactile_normal_force` - per-taxel normal force
+- `sensor.data.penetration_depth` - per-taxel penetration
+- `obj.data.root_pos_w`, `obj.data.root_quat_w` - object pose
 
 **Action space:**
 - Joint position targets via `robot.set_joint_position_target()`
@@ -550,8 +547,8 @@ The project provides the building blocks for reinforcement learning with tactile
 5. Use `num_envs > 1` in `SimulationConfig` for parallel rollouts
 
 **Important considerations:**
-- The `nut` object type uses SDF meshes required for the force field  always use `object_type="nut"` for force-based rewards
-- Tactile sensors add computational overhead  start with palm-only (`palm_enabled=True`, others `False`) for faster prototyping
+- The `nut` object type uses SDF meshes required for the force field - always use `object_type="nut"` for force-based rewards or define compliant custom objects and add them in the list of the object parameters.
+- Tactile sensors add computational overhead - start with palm-only (`palm_enabled=True`, others `False`) for faster prototyping
 - Physics at 200 Hz (dt=0.005) is recommended for stable tactile contact
 
 ### Key Implementation Details
@@ -568,7 +565,7 @@ The project provides the building blocks for reinforcement learning with tactile
 ```
 
 **Mimic joints:**
-The RH56E2 hand uses PhysX MimicJointAPI  only master joints (e.g., `index_1_joint`) need to be commanded. Follower joints (`_2`, `_3`, `_4`) follow automatically.
+The RH56E2 hand uses PhysX MimicJointAPI. Only master joints (e.g., `index_1_joint`) need to be commanded. Follower joints (`_2`, `_3`, `_4`) follow automatically.
 
 ---
 
